@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 AUTH_URLS = [
     "https://jwtxthug.up.railway.app/token",
     "https://jwt-aditya.vercel.app/token",
+    "https://hanif-swart.vercel.app/token",
+    "https://haniff3.vercel.app/token",
+    "https://haniff-3.vercel.app/token",
+    "https://haniff2.vercel.app/token",
+    "https://haniff-rgpg.vercel.app/token",
+    "https://haniff.vercel.app/token",
+    "https://hanif-fw1c.onrender.com/token",
     "https://hanif-swart.vercel.app/token"
 ]
 
