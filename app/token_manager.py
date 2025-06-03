@@ -15,17 +15,10 @@ logger = logging.getLogger(__name__)
 AUTH_URLS = [
     "https://jwtxthug.up.railway.app/token",
     "https://jwt-aditya.vercel.app/token",
-    "https://haniff3.vercel.app/token",
-    "https://haniff-3.vercel.app/token",
-    "https://haniff2.vercel.app/token",
-    "https://haniff-rgpg.vercel.app/token",
-    "https://haniff.vercel.app/token",
-    "https://hanif-fw1c.onrender.com/token",
     "https://hanif-swart.vercel.app/token"
 ]
 
 AUTH_URL = AUTH_URLS[0]
-NEW_AUTH_URL = os.getenv("NEW_AUTH_URL", "https://jwt-aditya.vercel.app/token")
 
 CACHE_DURATION = timedelta(hours=7).seconds
 TOKEN_REFRESH_THRESHOLD = timedelta(hours=6).seconds
@@ -67,21 +60,12 @@ class TokenCache:
             token_lock = threading.Lock()
             
             def fetch_token(user):
-                url = get_random_auth_url()  # Randomly select an API endpoint
-                try:
-                    params = {'uid': user['uid'], 'password': user['password']}
-                    response = self.session.get(url, params=params)
-                    if response.status_code == 200:
-                        data = response.json()
-                        token = data.get("token")
-                        if token:
-                            with token_lock:
-                                if token not in shared_tokens:
-                                    shared_tokens.append(token)
-                    else:
-                        # If first attempt fails, try the other URL
-                        other_url = [u for u in AUTH_URLS if u != url][0]
-                        response = self.session.get(other_url, params=params)
+                # Try all URLs in random order until we get a valid token
+                urls = random.sample(AUTH_URLS, len(AUTH_URLS))  # Randomize URL order
+                for url in urls:
+                    try:
+                        params = {'uid': user['uid'], 'password': user['password']}
+                        response = self.session.get(url, params=params, timeout=5)
                         if response.status_code == 200:
                             data = response.json()
                             token = data.get("token")
@@ -89,6 +73,10 @@ class TokenCache:
                                 with token_lock:
                                     if token not in shared_tokens:
                                         shared_tokens.append(token)
+                                return  # Exit after getting a valid token
+                    except Exception as e:
+                        logger.error(f"Error with {url} for {user['uid']}: {str(e)}")
+                        continue  # Try next URL
                 except Exception as e:
                     logger.error(f"Error fetching token for {user['uid']} (server {server_key}): {str(e)}")
             
