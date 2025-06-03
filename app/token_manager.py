@@ -8,6 +8,8 @@ import requests
 from cachetools import TTLCache
 from datetime import timedelta
 import random
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,40 @@ class TokenCache:
         self.cache = TTLCache(maxsize=100, ttl=CACHE_DURATION)
         self.last_refresh = {}
         self.lock = threading.Lock()
-        self.session = requests.Session()
+        self.session = self._create_session()
         self.servers_config = servers_config
+
+    def _create_session(self):
+        session = requests.Session()
+        
+        # Configure retry strategy with exponential backoff
+        retry_strategy = Retry(
+            total=3,  # total number of retries
+            backoff_factor=0.5,  # wait 0.5, 1, 2 seconds between retries
+            status_forcelist=[500, 502, 503, 504],  # HTTP status codes to retry on
+        )
+        
+        # Configure the adapter with the retry strategy and pooling
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=50,  # increase connection pool size
+            pool_maxsize=50,
+            pool_block=False
+        )
+        
+        # Mount the adapter for both HTTP and HTTPS
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Set default timeouts and headers
+        session.timeout = (3.05, 15)  # (connect timeout, read timeout)
+        session.headers.update({
+            'Connection': 'keep-alive',
+            'Accept-Encoding': 'gzip',
+            'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)'
+        })
+        
+        return session
 
     def get_tokens(self, server_key):
         with self.lock:
@@ -53,19 +87,18 @@ class TokenCache:
         try:
             creds = self._load_credentials(server_key)
             tokens = []
-            batch_size = 25  # Increased batch size for faster processing
-            self.session.timeout = 15  # Reduced timeout for faster failure detection
+            batch_size = 30  # Slightly increased batch size
             all_threads = []
             shared_tokens = []
             token_lock = threading.Lock()
             
             def fetch_token(user):
                 # Try all URLs in random order until we get a valid token
-                urls = random.sample(AUTH_URLS, len(AUTH_URLS))  # Randomize URL order
+                urls = random.sample(AUTH_URLS, len(AUTH_URLS))
                 for url in urls:
                     try:
                         params = {'uid': user['uid'], 'password': user['password']}
-                        response = self.session.get(url, params=params, timeout=5)
+                        response = self.session.get(url, params=params)
                         if response.status_code == 200:
                             data = response.json()
                             token = data.get("token")
@@ -73,29 +106,28 @@ class TokenCache:
                                 with token_lock:
                                     if token not in shared_tokens:
                                         shared_tokens.append(token)
-                                return  # Exit after getting a valid token
+                                return
                     except Exception as e:
-                        logger.error(f"Error with {url} for {user['uid']}: {str(e)}")
-                        continue  # Try next URL
-                except Exception as e:
-                    logger.error(f"Error fetching token for {user['uid']} (server {server_key}): {str(e)}")
-            
-            # Create all threads at once
+                        logger.debug(f"Error with {url} for {user['uid']}: {str(e)}")
+                        continue
+
+            thread_pool = []
             for user in creds:
-                thread = threading.Thread(target=fetch_token, args=(user,))
-                all_threads.append(thread)
-                thread.start()
+                while len(thread_pool) >= batch_size:
+                    # Clean up completed threads
+                    thread_pool = [t for t in thread_pool if t.is_alive()]
+                    if len(thread_pool) >= batch_size:
+                        time.sleep(0.1)
                 
-                # If we've started a batch worth of threads, wait for some to complete
-                if len(all_threads) >= batch_size:
-                    for t in all_threads[:batch_size//2]:  # Wait for half the batch
-                        t.join(timeout=10)
-                    all_threads = all_threads[batch_size//2:]  # Keep remaining threads
+                thread = threading.Thread(target=fetch_token, args=(user,))
+                thread.start()
+                thread_pool.append(thread)
+                all_threads.append(thread)
             
-            # Wait for any remaining threads
+            # Wait for remaining threads
             for thread in all_threads:
                 thread.join(timeout=10)
-                
+            
             tokens.extend(shared_tokens)
 
             if tokens:
