@@ -17,6 +17,9 @@ AUTH_URLS = [
     "https://jwt-aditya.vercel.app/token"
 ]
 
+AUTH_URL = AUTH_URLS[0]
+NEW_AUTH_URL = os.getenv("NEW_AUTH_URL", "https://jwt-aditya.vercel.app/token")
+
 CACHE_DURATION = timedelta(hours=7).seconds
 TOKEN_REFRESH_THRESHOLD = timedelta(hours=6).seconds
 
@@ -51,8 +54,6 @@ class TokenCache:
             creds = self._load_credentials(server_key)
             tokens = []
             batch_size = 10  # Process 10 accounts at a time
-            
-            # Create session with longer timeout
             self.session.timeout = 30  # 30 seconds timeout
             
             for i in range(0, len(creds), batch_size):
@@ -61,38 +62,27 @@ class TokenCache:
                 batch_tokens = []
                 
                 def fetch_token(user):
-                    for auth_url in AUTH_URLS:
+                    for url in [AUTH_URL, NEW_AUTH_URL]:
                         try:
                             params = {'uid': user['uid'], 'password': user['password']}
-                            response = self.session.get(auth_url, params=params)
+                            response = self.session.get(url, params=params)
                             if response.status_code == 200:
                                 data = response.json()
                                 token = data.get("token")
-                                if token:
+                                if token and token not in batch_tokens:
                                     batch_tokens.append(token)
-                                    logger.info(f"Successfully got token from {auth_url} for {user['uid']}")
-                                    return  # Success, no need to try other URLs
                             else:
-                                logger.warning(f"Failed to fetch token from {auth_url} for {user['uid']} (server {server_key}): Status {response.status_code}")
+                                logger.warning(f"Failed to fetch token for {user['uid']} (server {server_key}) from {url}: Status {response.status_code}, Response: {response.text}")
                         except Exception as e:
-                            logger.error(f"Error fetching token from {auth_url} for {user['uid']} (server {server_key}): {str(e)}")
-                            continue  # Try next URL
-                    
-                    logger.error(f"All authentication endpoints failed for {user['uid']} (server {server_key})")
+                            logger.error(f"Error fetching token for {user['uid']} (server {server_key}) from {url}: {str(e)}")
                 
-                # Create and start threads for batch processing
                 for user in batch:
                     thread = threading.Thread(target=fetch_token, args=(user,))
                     threads.append(thread)
                     thread.start()
-                
-                # Wait for all threads in this batch to complete
                 for thread in threads:
-                    thread.join(timeout=25)  # 25 seconds timeout per batch
-                
+                    thread.join(timeout=25)
                 tokens.extend(batch_tokens)
-                
-                # Add a small delay between batches to prevent rate limiting
                 time.sleep(1)
 
             if tokens:
