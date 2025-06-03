@@ -41,20 +41,43 @@ class TokenCache:
         try:
             creds = self._load_credentials(server_key)
             tokens = []
-
-            for user in creds:
-                try:
-                    params = {'uid': user['uid'], 'password': user['password']}
-                    response = self.session.get(AUTH_URL, params=params, timeout=5)
-                    if response.status_code == 200:
-                        token = response.json().get("token")
-                        if token:
-                            tokens.append(token)
-                    else:
-                        logger.warning(f"Failed to fetch token for {user['uid']} (server {server_key}): Status {response.status_code}, Response: {response.text}")
-                except Exception as e:
-                    logger.error(f"Error fetching token for {user['uid']} (server {server_key}): {str(e)}")
-                    continue
+            batch_size = 10  # Process 10 accounts at a time
+            
+            # Create session with longer timeout
+            self.session.timeout = 30  # 30 seconds timeout
+            
+            for i in range(0, len(creds), batch_size):
+                batch = creds[i:i + batch_size]
+                threads = []
+                batch_tokens = []
+                
+                def fetch_token(user):
+                    try:
+                        params = {'uid': user['uid'], 'password': user['password']}
+                        response = self.session.get(AUTH_URL, params=params)
+                        if response.status_code == 200:
+                            token = response.json().get("token")
+                            if token:
+                                batch_tokens.append(token)
+                        else:
+                            logger.warning(f"Failed to fetch token for {user['uid']} (server {server_key}): Status {response.status_code}, Response: {response.text}")
+                    except Exception as e:
+                        logger.error(f"Error fetching token for {user['uid']} (server {server_key}): {str(e)}")
+                
+                # Create and start threads for batch processing
+                for user in batch:
+                    thread = threading.Thread(target=fetch_token, args=(user,))
+                    threads.append(thread)
+                    thread.start()
+                
+                # Wait for all threads in this batch to complete
+                for thread in threads:
+                    thread.join(timeout=25)  # 25 seconds timeout per batch
+                
+                tokens.extend(batch_tokens)
+                
+                # Add a small delay between batches to prevent rate limiting
+                time.sleep(1)
 
             if tokens:
                 self.cache[server_key] = tokens
