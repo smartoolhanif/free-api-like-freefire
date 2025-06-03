@@ -53,37 +53,55 @@ class TokenCache:
         try:
             creds = self._load_credentials(server_key)
             tokens = []
-            batch_size = 10  # Process 10 accounts at a time
-            self.session.timeout = 30  # 30 seconds timeout
+            batch_size = 25  # Increased batch size for faster processing
+            self.session.timeout = 15  # Reduced timeout for faster failure detection
+            all_threads = []
+            shared_tokens = []
+            token_lock = threading.Lock()
             
-            for i in range(0, len(creds), batch_size):
-                batch = creds[i:i + batch_size]
-                threads = []
-                batch_tokens = []
+            def fetch_token(user):
+                url = get_random_auth_url()  # Randomly select an API endpoint
+                try:
+                    params = {'uid': user['uid'], 'password': user['password']}
+                    response = self.session.get(url, params=params)
+                    if response.status_code == 200:
+                        data = response.json()
+                        token = data.get("token")
+                        if token:
+                            with token_lock:
+                                if token not in shared_tokens:
+                                    shared_tokens.append(token)
+                    else:
+                        # If first attempt fails, try the other URL
+                        other_url = [u for u in AUTH_URLS if u != url][0]
+                        response = self.session.get(other_url, params=params)
+                        if response.status_code == 200:
+                            data = response.json()
+                            token = data.get("token")
+                            if token:
+                                with token_lock:
+                                    if token not in shared_tokens:
+                                        shared_tokens.append(token)
+                except Exception as e:
+                    logger.error(f"Error fetching token for {user['uid']} (server {server_key}): {str(e)}")
+            
+            # Create all threads at once
+            for user in creds:
+                thread = threading.Thread(target=fetch_token, args=(user,))
+                all_threads.append(thread)
+                thread.start()
                 
-                def fetch_token(user):
-                    for url in [AUTH_URL, NEW_AUTH_URL]:
-                        try:
-                            params = {'uid': user['uid'], 'password': user['password']}
-                            response = self.session.get(url, params=params)
-                            if response.status_code == 200:
-                                data = response.json()
-                                token = data.get("token")
-                                if token and token not in batch_tokens:
-                                    batch_tokens.append(token)
-                            else:
-                                logger.warning(f"Failed to fetch token for {user['uid']} (server {server_key}) from {url}: Status {response.status_code}, Response: {response.text}")
-                        except Exception as e:
-                            logger.error(f"Error fetching token for {user['uid']} (server {server_key}) from {url}: {str(e)}")
+                # If we've started a batch worth of threads, wait for some to complete
+                if len(all_threads) >= batch_size:
+                    for t in all_threads[:batch_size//2]:  # Wait for half the batch
+                        t.join(timeout=10)
+                    all_threads = all_threads[batch_size//2:]  # Keep remaining threads
+            
+            # Wait for any remaining threads
+            for thread in all_threads:
+                thread.join(timeout=10)
                 
-                for user in batch:
-                    thread = threading.Thread(target=fetch_token, args=(user,))
-                    threads.append(thread)
-                    thread.start()
-                for thread in threads:
-                    thread.join(timeout=25)
-                tokens.extend(batch_tokens)
-                time.sleep(1)
+            tokens.extend(shared_tokens)
 
             if tokens:
                 self.cache[server_key] = tokens
