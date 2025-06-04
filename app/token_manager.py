@@ -17,13 +17,6 @@ logger = logging.getLogger(__name__)
 AUTH_URLS = [
     "https://jwtxthug.up.railway.app/token",
     "https://jwt-aditya.vercel.app/token",
-    "https://hanif-swart.vercel.app/token",
-    "https://haniff3.vercel.app/token",
-    "https://haniff-3.vercel.app/token",
-    "https://haniff2.vercel.app/token",
-    "https://haniff-rgpg.vercel.app/token",
-    "https://haniff.vercel.app/token",
-    "https://hanif-fw1c.onrender.com/token",
     "https://hanif-swart.vercel.app/token"
 ]
 
@@ -130,20 +123,7 @@ class TokenCache:
                 thread.start()
                 thread_pool.append(thread)
                 all_threads.append(thread)
-                        # Example: log the raw response before decoding
-            response = requests.get(api_url, headers=get_headers(token))
-            logger.debug(f"Raw response: {response.content}")
             
-            # Now try to decode as Protobuf
-            try:
-                info = Info()
-                info.ParseFromString(response.content)
-            except Exception as e:
-                logger.error(f"Error decoding Protobuf data: {e}")
-                if response.headers.get("Content-Type") != "application/x-protobuf":
-                    logger.error(f"Unexpected content type: {response.headers.get('Content-Type')}")
-                    logger.error(f"Response body: {response.text}")
-                    # Handle error or return early
             # Wait for remaining threads
             for thread in all_threads:
                 thread.join(timeout=10)
@@ -184,10 +164,10 @@ def get_headers(token: str):
     return {
         'User-Agent': "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
         'Connection': "Keep-Alive",
+        'Accept-Encoding': "gzip",
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/x-www-form-urlencoded",
-        "X-Unity-Version": "2018.4.11f1",w-form-urlencoded",
-        "X-GA": "v1 1",n": "2018.4.11f1",
+        "X-Unity-Version": "2018.4.11f1",
+        "X-GA": "v1 1",
         "ReleaseVersion": "OB49"
-    }   "ReleaseVersion": "OB49"
     }
